@@ -115,17 +115,55 @@ def phase1_strategy(prices, outcomes):
 # -----------------------
 # Phase 2: 
 # -----------------------
-def phase2_strategy(prices, outcomes):
+def phase2_strategy(prices, outcomes, comp_prices):
     # TODO: add competitor-aware model + Thompson Sampling
+    try: 
+        if len(prices) == 0:
+            return 50.0
 
-    if len(prices) == 0:
+        # Part 1: get demand model
+        # estimate the parameters for the competitor-aware model
+        competitor_median_array = np.median(comp_prices, axis=1)
+        X = np.column_stack([np.ones(len(prices)), prices, competitor_median_array])
+        y = outcomes
+
+        model = LogisticRegression(fit_intercept=False, C=10.0, max_iter = 1000)
+        model.fit(X, y)
+        mu_n = model.coef_[0]
+
+        # get the distribution of parameters
+        probs = model.predict_proba(X)[:, 1]
+        v = probs * (1 - probs)
+        v = np.maximum(v, 1e-5) # prevent data error
+        precision_n = (X.T * v) @ X + np.eye(3) * 0.1
+        cov_n = np.linalg.inv(precision_n)
+
+        # 3. Thompson Sampling: sampling one beta from the parameter distribution 
+        beta = np.random.multivariate_normal(mu_n, cov_n)
+        # check: beta1 (coefficient of our own price) should be negative as price increases, prob of buying decreases. 
+        if beta[1] > 0: beta[1] = -0.001
+
+
+        # Part 2: get opt price
+        last_comp_median_p = competitor_median_array[-1]
+
+        best_p = 50.0
+        max_rev = -1.0
+
+        # find the optimal price between 1 and 100 that max price * prob of buying 
+        for p_test in np.linspace(1.0, 100.0, 100):
+            logit = beta[0] + beta[1] * p_test + beta[2] * last_comp_median_p
+            prob_buy = 1.0 / (1.0 + np.exp(-logit))
+                
+            expected_revenue = p_test * prob_buy
+            if expected_revenue > max_rev:
+                max_rev = expected_revenue
+                best_p = p_test
+
+        return round(float(best_p), 2)
+
+    except Exception:
         return 50.0
-
-    # Continue exploring with mix of grid and uniform
-    if np.random.rand() < 0.6:
-        return float(np.random.choice(EXPLORATION_GRID))
-    else:
-        return float(np.random.uniform(PRICE_MIN, PRICE_MAX))
 
 
 # -----------------------
@@ -151,7 +189,7 @@ def strategy():
             return phase1_strategy(prices, outcomes)
 
         elif t < T_PHASE2:
-            return phase2_strategy(prices, outcomes)
+            return phase2_strategy(prices, outcomes, comp_prices)
 
         else:
             return phase3_strategy(prices, outcomes)
