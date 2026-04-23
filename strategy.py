@@ -383,7 +383,7 @@ def phase3_strategy(prices, outcomes, comp_prices):
             if q_local is None:
                 q_hybrid = q_global
             else:
-                lam = 0.6 if n < 150 else 0.4
+                lam = 0.6 if n < 150 else 0.35
                 q_hybrid = lam * q_global + (1.0 - lam) * q_local
 
             q_hybrid = float(np.clip(q_hybrid, 0.0, 1.0))
