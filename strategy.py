@@ -12,12 +12,10 @@ from sklearn.ensemble import HistGradientBoostingClassifier
 PRICE_MIN = 1.0 # prices are constrained to the range [1,100]
 PRICE_MAX = 100.0
 
-INITIAL_THRESHOLD = 40   # grid exploration length
-T_PHASE1 = 50         # end of Phase 1 (use phase 1 for first 50 observations)
-T_PHASE2 = 200           # end of Phase 2
+T_PHASE1 = 25    # end of Phase 1 (exploration)
+T_PHASE2 = 100   # end of Phase 2; Phase 3 activates at t≥100, reachable in 168-period game
 
-# Log-spaced grid (better for logistic demand)
-EXPLORATION_GRID = [round(float(p), 2) for p in np.linspace(2.0, PRICE_MAX, INITIAL_THRESHOLD)]
+EXPLORATION_GRID = [round(float(p), 2) for p in np.linspace(1.0, 100.0, T_PHASE1)]
 
 # -----------------------
 # Data Loading
@@ -119,46 +117,30 @@ def phase1_strategy(prices, outcomes):
 # Phase 2: 
 # -----------------------
 def phase2_strategy(prices, outcomes, comp_prices):
-    # TODO: add competitor-aware model + Thompson Sampling
-    try: 
+    try:
         if len(prices) == 0:
             return 50.0
 
-        # Part 1: get demand model
-        # estimate the parameters for the competitor-aware model
-
-        # take median competitor price each period
         competitor_median_array = np.median(comp_prices, axis=1)
-        X = np.column_stack([np.ones(len(prices)), prices, competitor_median_array])
+        X = np.column_stack([prices, competitor_median_array])
         y = outcomes
 
-        model = LogisticRegression(fit_intercept=False, C=10.0, max_iter = 1000)
+        # fit_intercept=True lets sklearn handle the constant term properly
+        model = LogisticRegression(fit_intercept=True, C=10.0, max_iter=1000)
         model.fit(X, y)
-        mu_n = model.coef_[0] # estimated coefficient vector
 
-        # get the distribution of parameters
-        probs = model.predict_proba(X)[:, 1]
-        v = probs * (1 - probs)
-        v = np.maximum(v, 1e-5) # prevent data error
-        precision_n = (X.T * v) @ X + np.eye(3) * 0.1
-        cov_n = np.linalg.inv(precision_n)
+        coef = model.coef_[0]         # [price_coef, comp_median_coef]
+        intercept = model.intercept_[0]
 
-        # 3. Thompson Sampling: sampling one beta from the parameter distribution 
-        beta = np.random.multivariate_normal(mu_n, cov_n)
-        # check: beta1 (coefficient of our own price) should be negative as price increases, prob of buying decreases. 
-        if beta[1] > 0: beta[1] = -0.001
-
-        # Part 2: get opt price
-        last_comp_median_p = competitor_median_array[-1]
+        # Use mean historical competitor median — last period alone is one noisy draw
+        mean_comp_median = float(np.mean(competitor_median_array))
 
         best_p = 50.0
         max_rev = -1.0
 
-        # find the optimal price between 1 and 100 that max price * prob of buying 
-        for p_test in np.linspace(1.0, 100.0, 100):
-            logit = beta[0] + beta[1] * p_test + beta[2] * last_comp_median_p
+        for p_test in np.linspace(1.0, 100.0, 200):
+            logit = intercept + coef[0] * p_test + coef[1] * mean_comp_median
             prob_buy = 1.0 / (1.0 + np.exp(-logit))
-                
             expected_revenue = p_test * prob_buy
             if expected_revenue > max_rev:
                 max_rev = expected_revenue
@@ -333,13 +315,13 @@ def phase3_strategy(prices, outcomes, comp_prices):
             learning_rate=0.03,
             max_iter=150,
             max_depth=3,
-            min_samples_leaf=20,
+            min_samples_leaf=8,
             random_state=0
         )
         model.fit(X, y)
 
-        # Current market context = latest observed competitor prices
-        current_comp_row = comp_prices[-1]
+        # Use mean historical competitor row — last period alone is one noisy draw
+        current_comp_row = np.mean(comp_prices, axis=0)
 
         # Candidate price search
         coarse_grid = np.linspace(1.0, 100.0, 50)
@@ -352,13 +334,14 @@ def phase3_strategy(prices, outcomes, comp_prices):
 
             q_global = float(model.predict_proba(x_candidate)[0, 1])
 
+            k = min(40, n // 2)
             q_local = local_kernel_prob(
                 candidate_price=float(p),
                 hist_prices=prices,
                 hist_outcomes=outcomes,
                 hist_comp_prices=comp_prices,
                 current_comp_row=current_comp_row,
-                k_neighbors=80,
+                k_neighbors=k,
                 price_bandwidth=6.0
             )
 
@@ -366,8 +349,7 @@ def phase3_strategy(prices, outcomes, comp_prices):
             if q_local is None:
                 q_hybrid = q_global
             else:
-                # Trust global more if data is modest; local more once data is large
-                lam = 0.6 if n < 250 else 0.35
+                lam = 0.6 if n < 150 else 0.35
                 q_hybrid = lam * q_global + (1.0 - lam) * q_local
 
             q_hybrid = float(np.clip(q_hybrid, 0.0, 1.0))
@@ -387,20 +369,21 @@ def phase3_strategy(prices, outcomes, comp_prices):
 
             q_global = float(model.predict_proba(x_candidate)[0, 1])
 
+            k = min(40, n // 2)
             q_local = local_kernel_prob(
                 candidate_price=float(p),
                 hist_prices=prices,
                 hist_outcomes=outcomes,
                 hist_comp_prices=comp_prices,
                 current_comp_row=current_comp_row,
-                k_neighbors=80,
+                k_neighbors=k,
                 price_bandwidth=6.0
             )
 
             if q_local is None:
                 q_hybrid = q_global
             else:
-                lam = 0.6 if n < 250 else 0.45
+                lam = 0.6 if n < 150 else 0.4
                 q_hybrid = lam * q_global + (1.0 - lam) * q_local
 
             q_hybrid = float(np.clip(q_hybrid, 0.0, 1.0))
@@ -409,9 +392,6 @@ def phase3_strategy(prices, outcomes, comp_prices):
             if score > best_score:
                 best_score = score
                 best_p = float(p)
-        print("FINAL best_p =", round(best_p, 4))
-        print("FINAL best_score =", round(best_score, 4))
-
         return round(float(np.clip(best_p, PRICE_MIN, PRICE_MAX)), 2)
 
     except Exception as e:
