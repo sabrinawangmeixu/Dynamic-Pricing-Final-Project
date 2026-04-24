@@ -22,20 +22,25 @@ EXPLORATION_GRID = [round(float(p), 2) for p in np.linspace(1.0, 100.0, T_PHASE1
 # -----------------------
 def load_data():
     try:
-        # read historical data from csvs 
-        demand_df = pd.read_csv("historical_demands.csv", header=None)
-        prices_df = pd.read_csv("historical_prices.csv", header=None)
+        # read historical data from csvs (following professor's example)
+        demands = pd.read_csv("historical_demands.csv", header=None)
+        prices = pd.read_csv("../historical_prices.csv", header=None)
+        
+        # Set column names for prices: team 1, 2, 3, ...
+        prices.columns = np.arange(len(prices.columns)) + 1
 
-        my_prices = demand_df.iloc[:, 0].values.astype(float)
-        outcomes  = demand_df.iloc[:, 1].values.astype(float)
+        # demands: row i = [my_price_i, outcome_i]
+        my_prices = demands.iloc[:, 0].values.astype(float)
+        outcomes = demands.iloc[:, 1].values.astype(float)
 
-        TEAM_IDX = 0
-        all_prices = prices_df.values.astype(float)
-        comp_prices = np.delete(all_prices, TEAM_IDX, axis=1)
+        # prices: row i = [price_team_1, price_team_2, ...]
+        # comp_prices = prices from all teams except team 1
+        all_prices = prices.values.astype(float)
+        comp_prices = all_prices[:, 1:]  # all columns except team 1
 
         n = min(len(my_prices), len(comp_prices))
-        my_prices   = my_prices[:n]
-        outcomes    = outcomes[:n]
+        my_prices = my_prices[:n]
+        outcomes = outcomes[:n]
         comp_prices = comp_prices[:n]
 
         mask = (
