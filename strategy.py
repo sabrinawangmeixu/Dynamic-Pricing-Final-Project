@@ -409,10 +409,10 @@ def strategy():
         comp_prices = data["comp_prices"]
         t = data["t"]
 
-        if t < T_PHASE1:
+        if t <= T_PHASE1:
             return phase1_strategy(prices, outcomes)
 
-        elif t < T_PHASE2:
+        elif t <= T_PHASE2:
             return phase2_strategy(prices, outcomes, comp_prices)
 
         else:
