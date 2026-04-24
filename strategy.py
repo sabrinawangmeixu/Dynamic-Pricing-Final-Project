@@ -23,8 +23,8 @@ EXPLORATION_GRID = [round(float(p), 2) for p in np.linspace(1.0, 100.0, T_PHASE1
 def load_data():
     try:
         # read historical data from csvs 
-        demand_df = pd.read_csv("test_historical_demands.csv", header=None)
-        prices_df = pd.read_csv("test_historical_prices.csv", header=None)
+        demand_df = pd.read_csv("historical_demands.csv", header=None)
+        prices_df = pd.read_csv("historical_prices.csv", header=None)
 
         my_prices = demand_df.iloc[:, 0].values.astype(float)
         outcomes  = demand_df.iloc[:, 1].values.astype(float)
