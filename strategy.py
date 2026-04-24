@@ -122,17 +122,18 @@ def phase2_strategy(prices, outcomes, comp_prices):
             return 50.0
 
         competitor_median_array = np.median(comp_prices, axis=1)
+
+        '''
+        # MLE logistic regression
         X = np.column_stack([prices, competitor_median_array])
         y = outcomes
 
-        # fit_intercept=True lets sklearn handle the constant term properly
         model = LogisticRegression(fit_intercept=True, C=10.0, max_iter=1000)
         model.fit(X, y)
 
-        coef = model.coef_[0]         # [price_coef, comp_median_coef]
+        coef = model.coef_[0]
         intercept = model.intercept_[0]
 
-        # Use mean historical competitor median — last period alone is one noisy draw
         mean_comp_median = float(np.mean(competitor_median_array))
 
         best_p = 50.0
@@ -140,6 +141,39 @@ def phase2_strategy(prices, outcomes, comp_prices):
 
         for p_test in np.linspace(1.0, 100.0, 200):
             logit = intercept + coef[0] * p_test + coef[1] * mean_comp_median
+            prob_buy = 1.0 / (1.0 + np.exp(-logit))
+            expected_revenue = p_test * prob_buy
+            if expected_revenue > max_rev:
+                max_rev = expected_revenue
+                best_p = p_test
+
+        return round(float(best_p), 2)
+        '''
+
+        # Thompson Sampling with Laplace approximation
+        X = np.column_stack([np.ones(len(prices)), prices, competitor_median_array])
+        y = outcomes
+
+        model = LogisticRegression(fit_intercept=False, C=10.0, max_iter=1000)
+        model.fit(X, y)
+        mu_n = model.coef_[0]  # [intercept, price_coef, comp_median_coef]
+
+        probs = model.predict_proba(X)[:, 1]
+        v = np.maximum(probs * (1 - probs), 1e-5)
+        precision_n = (X.T * v) @ X + np.eye(3) * 0.1
+        cov_n = np.linalg.inv(precision_n)
+
+        beta = np.random.multivariate_normal(mu_n, cov_n)
+        if beta[1] > 0:
+            beta[1] = -0.001
+
+        last_comp_median = competitor_median_array[-1]
+
+        best_p = 50.0
+        max_rev = -1.0
+
+        for p_test in np.linspace(1.0, 100.0, 200):
+            logit = beta[0] + beta[1] * p_test + beta[2] * last_comp_median
             prob_buy = 1.0 / (1.0 + np.exp(-logit))
             expected_revenue = p_test * prob_buy
             if expected_revenue > max_rev:
