@@ -146,7 +146,8 @@ def phase1_strategy(prices, outcomes):
 # -----------------------
 def phase2_strategy(prices, outcomes, comp_prices):
     try:
-        if len(prices) == 0:
+        t = len(prices)
+        if t == 0:
             return 50.0
 
         competitor_median_array = np.median(comp_prices, axis=1)
@@ -179,31 +180,35 @@ def phase2_strategy(prices, outcomes, comp_prices):
         '''
 
         # Thompson Sampling with Laplace approximation
-        X = np.column_stack([np.ones(len(prices)), prices, competitor_median_array])
-        y = outcomes
+        y_log = np.log(outcomes + 1.0) #in case demand = 0
+        X_log = np.column_stack([
+            np.ones(t), 
+            np.log(prices), 
+            np.log(comp_median_array + 1e-5) # prevending error
+        ])
 
-        model = LogisticRegression(fit_intercept=False, C=10.0, max_iter=1000)
-        model.fit(X, y)
-        mu_n = model.coef_[0]  # [intercept, price_coef, comp_median_coef]
-
-        probs = model.predict_proba(X)[:, 1]
-        v = np.maximum(probs * (1 - probs), 1e-5)
-        precision_n = (X.T * v) @ X + np.eye(3) * 0.1
+        # get the distribution of parameters 
+        precision_n = X_log.T @ X_log + np.eye(3) * 0.1
         cov_n = np.linalg.inv(precision_n)
+        mu_n = cov_n @ (X_log.T @ y_log)
 
+        # Thompson Sampling: sampling one beta from the parameter distribution 
         beta = np.random.multivariate_normal(mu_n, cov_n)
-        if beta[1] > 0:
-            beta[1] = -0.001
 
-        last_comp_median = competitor_median_array[-1]
+        if beta[1] > 0: beta[1] = -0.01 # make sure the coefficient of our own price is negative
+
+        # Part 2: get opt price
+        last_comp_median_p = competitor_median_array[-1]
 
         best_p = 50.0
         max_rev = -1.0
 
-        for p_test in np.linspace(1.0, 100.0, 200):
-            logit = beta[0] + beta[1] * p_test + beta[2] * last_comp_median
-            prob_buy = 1.0 / (1.0 + np.exp(-logit))
-            expected_revenue = p_test * prob_buy
+        # find the optimal price between 1 and 100 that max price * prob of buying 
+        for p_test in np.linspace(1.0, 100.0, 100):
+            log_demand = beta[0] + beta[1] * np.log(p_test) + beta[2] * np.log(last_comp_median_p) 
+            expected_demand = np.exp(log_demand)
+
+            expected_revenue = p_test * expected_demand
             if expected_revenue > max_rev:
                 max_rev = expected_revenue
                 best_p = p_test
