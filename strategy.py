@@ -24,16 +24,20 @@ def load_data():
     try:
         # read historical data from csvs (following professor's example)
         demands = pd.read_csv("historical_demands.csv", header=None)
-        prices = pd.read_csv("../historical_prices.csv", header=None)
+        prices = pd.read_csv("historical_prices.csv", header=None)
         
         # Set column names for prices: team 1, 2, 3, ...
         prices.columns = np.arange(len(prices.columns)) + 1
 
-        # demands: row i = [my_price_i, outcome_i]
-        my_prices = demands.iloc[:, 0].values.astype(float)
-        outcomes = demands.iloc[:, 1].values.astype(float)
+        # demands: single column of demand counts (0, 1, 2, 3, ...)
+        # Original: outcomes = demands.iloc[:, 0].values.astype(float)
+        # Temporarily convert counts to binary (0 = no demand, >0 = some demand)
+        # TODO: Once TA clarifies the scale, convert to actual demand/purchase ratios
+        demand_counts = demands.iloc[:, 0].values.astype(float)
+        outcomes = (demand_counts > 0).astype(float)
 
-        # prices: row i = [price_team_1, price_team_2, ...]
+        # prices: row i = [my_price, price_team_2, price_team_3, ...]
+        my_prices = prices.iloc[:, 0].values.astype(float)
         # comp_prices = prices from all teams except team 1
         all_prices = prices.values.astype(float)
         comp_prices = all_prices[:, 1:]  # all columns except team 1
@@ -45,8 +49,7 @@ def load_data():
 
         mask = (
             (my_prices >= PRICE_MIN) &
-            (my_prices <= PRICE_MAX) &
-            np.isin(outcomes, [0, 1])
+            (my_prices <= PRICE_MAX)
         )
 
         return {
