@@ -25,7 +25,7 @@ def load_data():
     try:
         # read historical data from csvs (following professor's example)
         demands = pd.read_csv("historical_demands.csv", header=None)
-        prices = pd.read_csv("historical_prices.csv", header=None)
+        prices = pd.read_csv("../historical_prices.csv", header=None)
         
         # Set column names for prices: team 1, 2, 3, ...
         prices.columns = np.arange(len(prices.columns)) + 1
