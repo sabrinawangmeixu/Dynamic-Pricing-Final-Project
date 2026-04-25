@@ -4,7 +4,8 @@ import random
 from sklearn.linear_model import LogisticRegression
 from scipy.optimize import minimize_scalar
 from sklearn.experimental import enable_hist_gradient_boosting
-from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.ensemble import HistGradientBoostingRegressor
+# from sklearn.ensemble import HistGradientBoostingClassifier
 
 # -----------------------
 # Constants
@@ -34,7 +35,8 @@ def load_data():
         # Temporarily convert counts to binary (0 = no demand, >0 = some demand)
         # TODO: Once TA clarifies the scale, convert to actual demand/purchase ratios
         demand_counts = demands.iloc[:, 0].values.astype(float)
-        outcomes = (demand_counts > 0).astype(float)
+        #outcomes = (demand_counts > 0).astype(float)
+        outcomes = demand_counts
 
         # prices: row i = [my_price, price_team_2, price_team_3, ...]
         my_prices = prices.iloc[:, 0].values.astype(float)
@@ -42,7 +44,7 @@ def load_data():
         all_prices = prices.values.astype(float)
         comp_prices = all_prices[:, 1:]  # all columns except team 1
 
-        n = min(len(my_prices), len(comp_prices))
+        n = min(len(my_prices), len(comp_prices), len(outcomes))
         my_prices = my_prices[:n]
         outcomes = outcomes[:n]
         comp_prices = comp_prices[:n]
@@ -106,20 +108,38 @@ def optimal_price(beta):
 
     return float(np.clip(res.x, PRICE_MIN, PRICE_MAX))
 
+def need_catchup_exploration(prices, min_unique=10):
+    if len(prices) == 0:
+        return True
+
+    unique_prices = np.unique(np.round(prices, 2))
+
+    # If we mostly only played 50, we did not explore enough
+    return len(unique_prices) < min_unique
 
 # -----------------------
 # Phase 1: Exploration 
 # -----------------------
+# def phase1_strategy(prices, outcomes):
+#     decisions = len(prices)
+
+#     if decisions == 0: # if no data, return 50 as default
+#         return 50.0
+
+#     # ---- Phase 1: systematic cycling through exploration grid ----
+#     # Cycle through grid to ensure diverse exploration
+#     grid_index = decisions % len(EXPLORATION_GRID)
+#     return float(EXPLORATION_GRID[grid_index])
+
 def phase1_strategy(prices, outcomes):
-    decisions = len(prices)
+    unique_prices = set(np.round(prices, 2))
 
-    if decisions == 0: # if no data, return 50 as default
-        return 50.0
+    for p in EXPLORATION_GRID:
+        if round(p, 2) not in unique_prices:
+            return float(p)
 
-    # ---- Phase 1: systematic cycling through exploration grid ----
-    # Cycle through grid to ensure diverse exploration
-    grid_index = decisions % len(EXPLORATION_GRID)
-    return float(EXPLORATION_GRID[grid_index])
+    # If all grid points already tried, fallback
+    return 50.0
 
 # -----------------------
 # Phase 2: 
@@ -241,7 +261,7 @@ def build_features(prices, comp_prices):
         comp_med,
         comp_min,
         comp_max,
-        comp_std,
+        comp_std, 
         gap_med,
         gap_min,
         gap_max,
@@ -285,18 +305,13 @@ def build_candidate_feature(p, current_comp_row):
 
 # Helper function: compute local probability estimate 
 
-def local_kernel_prob(candidate_price, hist_prices, hist_outcomes, hist_comp_prices, current_comp_row, k_neighbors = 80, price_bandwidth = 6.0):
-    """ 
-    Estimate local acceptance probability at candidate_price by:
-    1) selecting historical periods with similar competitor context
-    2) kernel-smoothing over our historical prices within that neighborhood
-    """
-    
+def local_kernel_demand(candidate_price, hist_prices, hist_demands, hist_comp_prices,
+                        current_comp_row, k_neighbors=80, price_bandwidth=6.0):
+
     n = len(hist_prices)
     if n < 20:
         return None
 
-    # Historical competitor context
     hist_med = np.median(hist_comp_prices, axis=1)
     hist_min = np.min(hist_comp_prices, axis=1)
     hist_max = np.max(hist_comp_prices, axis=1)
@@ -304,14 +319,13 @@ def local_kernel_prob(candidate_price, hist_prices, hist_outcomes, hist_comp_pri
 
     hist_context = np.column_stack([hist_med, hist_min, hist_max, hist_std])
 
-    # Current competitor context
-    curr_med = float(np.median(current_comp_row))
-    curr_min = float(np.min(current_comp_row))
-    curr_max = float(np.max(current_comp_row))
-    curr_std = float(np.std(current_comp_row))
-    curr_context = np.array([curr_med, curr_min, curr_max, curr_std], dtype=float)
+    curr_context = np.array([
+        np.median(current_comp_row),
+        np.min(current_comp_row),
+        np.max(current_comp_row),
+        np.std(current_comp_row)
+    ], dtype=float)
 
-    # Standardize context dimensions so one variable doesn't dominate
     means = np.mean(hist_context, axis=0)
     stds = np.std(hist_context, axis=0)
     stds = np.where(stds < 1e-6, 1.0, stds)
@@ -325,83 +339,80 @@ def local_kernel_prob(candidate_price, hist_prices, hist_outcomes, hist_comp_pri
     idx = np.argsort(dists)[:k_eff]
 
     local_prices = hist_prices[idx]
-    local_outcomes = hist_outcomes[idx]
+    local_demands = hist_demands[idx]
 
-    # Gaussian kernel in our own price dimension
-    price_diff = local_prices - candidate_price
-    weights = np.exp(-0.5 * (price_diff / price_bandwidth) ** 2)
+    weights = np.exp(-0.5 * ((local_prices - candidate_price) / price_bandwidth) ** 2)
 
-    # Tiny floor so we don't divide by zero
     if np.sum(weights) < 1e-10:
         return None
 
-    q_local = float(np.sum(weights * local_outcomes) / np.sum(weights))
-    q_local = float(np.clip(q_local, 0.0, 1.0))
-    return q_local
+    demand_local = float(np.sum(weights * local_demands) / np.sum(weights))
 
+    return max(demand_local, 0.0)
 
 def phase3_strategy(prices, outcomes, comp_prices):
     try:
         n = len(prices)
-        # Need both classes present to fit classifier
-        if len(np.unique(outcomes)) < 2:
+
+        # outcomes are now demand counts
+        demands = outcomes.astype(float)
+
+        if n < 30:
             return phase2_strategy(prices, outcomes, comp_prices)
 
-        # Build historical training features
         X = build_features(prices, comp_prices)
-        y = outcomes.astype(int)
+        y = demands
 
-        # Global model
-        model = HistGradientBoostingClassifier(
-            loss='log_loss',
+        model = HistGradientBoostingRegressor(
+            loss="squared_error",
             learning_rate=0.03,
             max_iter=150,
             max_depth=3,
             min_samples_leaf=8,
             random_state=0
         )
+
         model.fit(X, y)
 
-        # Use mean historical competitor row — last period alone is one noisy draw
-        current_comp_row = np.mean(comp_prices, axis=0)
-
-        # Candidate price search
-        coarse_grid = np.linspace(1.0, 100.0, 50)
+        current_comp_row = comp_prices[-1]
 
         best_p = 50.0
         best_score = -1.0
 
+        coarse_grid = np.linspace(1.0, 100.0, 50)
+
         for p in coarse_grid:
             x_candidate = build_candidate_feature(float(p), current_comp_row)
 
-            q_global = float(model.predict_proba(x_candidate)[0, 1])
+            demand_global = float(model.predict(x_candidate)[0])
+            demand_global = max(demand_global, 0.0)
 
             k = min(40, n // 2)
-            q_local = local_kernel_prob(
+
+            demand_local = local_kernel_demand(
                 candidate_price=float(p),
                 hist_prices=prices,
-                hist_outcomes=outcomes,
+                hist_demands=demands,
                 hist_comp_prices=comp_prices,
                 current_comp_row=current_comp_row,
                 k_neighbors=k,
                 price_bandwidth=6.0
             )
 
-            # Blend global + local
-            if q_local is None:
-                q_hybrid = q_global
+            if demand_local is None:
+                demand_hybrid = demand_global
             else:
                 lam = 0.6 if n < 150 else 0.35
-                q_hybrid = lam * q_global + (1.0 - lam) * q_local
+                demand_hybrid = lam * demand_global + (1.0 - lam) * demand_local
 
-            q_hybrid = float(np.clip(q_hybrid, 0.0, 1.0))
-            score = float(p) * q_hybrid
+            demand_hybrid = max(float(demand_hybrid), 0.0)
+
+            score = float(p) * demand_hybrid
 
             if score > best_score:
                 best_score = score
                 best_p = float(p)
 
-        # Fine search around the best coarse price
         low = max(PRICE_MIN, best_p - 5.0)
         high = min(PRICE_MAX, best_p + 5.0)
         fine_grid = np.linspace(low, high, 41)
@@ -409,37 +420,41 @@ def phase3_strategy(prices, outcomes, comp_prices):
         for p in fine_grid:
             x_candidate = build_candidate_feature(float(p), current_comp_row)
 
-            q_global = float(model.predict_proba(x_candidate)[0, 1])
+            demand_global = float(model.predict(x_candidate)[0])
+            demand_global = max(demand_global, 0.0)
 
             k = min(40, n // 2)
-            q_local = local_kernel_prob(
+
+            demand_local = local_kernel_demand(
                 candidate_price=float(p),
                 hist_prices=prices,
-                hist_outcomes=outcomes,
+                hist_demands=demands,
                 hist_comp_prices=comp_prices,
                 current_comp_row=current_comp_row,
                 k_neighbors=k,
                 price_bandwidth=6.0
             )
 
-            if q_local is None:
-                q_hybrid = q_global
+            if demand_local is None:
+                demand_hybrid = demand_global
             else:
                 lam = 0.6 if n < 150 else 0.35
-                q_hybrid = lam * q_global + (1.0 - lam) * q_local
+                demand_hybrid = lam * demand_global + (1.0 - lam) * demand_local
 
-            q_hybrid = float(np.clip(q_hybrid, 0.0, 1.0))
-            score = float(p) * q_hybrid
+            demand_hybrid = max(float(demand_hybrid), 0.0)
+
+            score = float(p) * demand_hybrid
 
             if score > best_score:
                 best_score = score
                 best_p = float(p)
+
         return round(float(np.clip(best_p, PRICE_MIN, PRICE_MAX)), 2)
 
     except Exception as e:
-        print("Phase 3 Error:", e)
+        print("Phase 3 Error:", e, flush=True)
         return 50.0
-
+    
 # -----------------------
 # Main Strategy:
 # -----------------------
@@ -451,8 +466,12 @@ def strategy():
         comp_prices = data["comp_prices"]
         t = data["t"]
 
-        if t <= T_PHASE1:
+        # Catch-up exploration since we missed Phase 1
+        if need_catchup_exploration(prices, min_unique=10):
             return phase1_strategy(prices, outcomes)
+
+        # if t <= T_PHASE1:
+        #     return phase1_strategy(prices, outcomes)
 
         elif t <= T_PHASE2:
             return phase2_strategy(prices, outcomes, comp_prices)
@@ -462,3 +481,5 @@ def strategy():
 
     except Exception as e: 
         return 50.0
+    
+
