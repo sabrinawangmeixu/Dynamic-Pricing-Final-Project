@@ -55,7 +55,7 @@ def load_data():
         )
 
         return {
-            "t": np.sum(mask),
+            "t": int(np.sum(mask)),
             "my_prices": my_prices[mask],
             "outcomes": outcomes[mask],
             "comp_prices": comp_prices[mask]
@@ -108,7 +108,7 @@ def optimal_price(beta):
 
     return float(np.clip(res.x, PRICE_MIN, PRICE_MAX))
 
-def need_catchup_exploration(prices, min_unique=10):
+def need_catchup_exploration(prices, min_unique=20):
     if len(prices) == 0:
         return True
 
@@ -184,7 +184,7 @@ def phase2_strategy(prices, outcomes, comp_prices):
         X_log = np.column_stack([
             np.ones(t), 
             np.log(prices), 
-            np.log(comp_median_array + 1e-5) # prevending error
+            np.log(competitor_median_array + 1e-5) # prevending error
         ])
 
         # get the distribution of parameters 
@@ -472,7 +472,7 @@ def strategy():
         t = data["t"]
 
         # Catch-up exploration since we missed Phase 1
-        if need_catchup_exploration(prices, min_unique=10):
+        if need_catchup_exploration(prices, min_unique=20):
             return phase1_strategy(prices, outcomes)
 
         # if t <= T_PHASE1:
