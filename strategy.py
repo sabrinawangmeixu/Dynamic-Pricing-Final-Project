@@ -194,8 +194,14 @@ def phase2_strategy(prices, outcomes, comp_prices):
 
         # Thompson Sampling: sampling one beta from the parameter distribution 
         beta = np.random.multivariate_normal(mu_n, cov_n)
-
-        if beta[1] > 0: beta[1] = -0.01 # make sure the coefficient of our own price is negative
+        
+        if t < 60:
+            beta[1] = min(beta[1], -0.05)
+        else:
+            beta[1] = min(beta[1], -0.02)
+        # if beta[1] > 0: 
+        #     beta[1] = -0.01 
+            # make sure the coefficient of our own price is negative
 
         # Part 2: get opt price
         last_comp_median_p = competitor_median_array[-1]
