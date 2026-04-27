@@ -180,13 +180,21 @@ def phase2_strategy(prices, outcomes, comp_prices):
         '''
 
         # Thompson Sampling with Laplace approximation
+        '''
         y_log = np.log(outcomes + 1.0) #in case demand = 0
         X_log = np.column_stack([
             np.ones(t), 
             np.log(prices), 
             np.log(competitor_median_array + 1e-5) # prevending error
         ])
-
+        '''
+        X_log = np.column_stack([
+                np.ones(time), 
+                prices, #prices, #np.log(prices), 
+                competitor_median_array #np.log(competitor_median_array + 1e-5) # prevending error
+            ])
+        y_log = np.log(outcomes + 1.0) #in case demand = 0
+        
         # get the distribution of parameters 
         precision_n = X_log.T @ X_log + np.eye(3) * 0.1
         cov_n = np.linalg.inv(precision_n)
@@ -194,7 +202,18 @@ def phase2_strategy(prices, outcomes, comp_prices):
 
         # Thompson Sampling: sampling one beta from the parameter distribution 
         beta = np.random.multivariate_normal(mu_n, cov_n)
+        if beta[1] > 0: beta[1] = -0.0001
+
+        last_comp_p = competitor_median_array[-1]
+        prices = np.linspace(1, 100, 500)
+        log_demand = beta[0] + beta[1] * prices + beta[2] * last_comp_p
+        demand = np.exp(log_demand)
+        revenue = prices * demand
+
+        max_rev_idx = np.argmax(revenue)
+        best_p = prices[max_rev_idx]
         
+        '''
         # Stronger elasticity guardrail
         if t < 60:
             beta[1] = min(beta[1], -1.2)
@@ -224,7 +243,7 @@ def phase2_strategy(prices, outcomes, comp_prices):
             if expected_revenue > max_rev:
                 max_rev = expected_revenue
                 best_p = p_test
-
+        '''
         return round(float(best_p), 2)
 
     except Exception:
