@@ -195,22 +195,28 @@ def phase2_strategy(prices, outcomes, comp_prices):
         # Thompson Sampling: sampling one beta from the parameter distribution 
         beta = np.random.multivariate_normal(mu_n, cov_n)
         
+        # Stronger elasticity guardrail
         if t < 60:
-            beta[1] = min(beta[1], -0.05)
+            beta[1] = min(beta[1], -1.2)
+            phase2_price_max = 80.0
         else:
-            beta[1] = min(beta[1], -0.02)
+            beta[1] = min(beta[1], -0.8)
+            phase2_price_max = 95.0
+
         # if beta[1] > 0: 
         #     beta[1] = -0.01 
             # make sure the coefficient of our own price is negative
-
+        # Mild continued exploration
+        if np.random.rand() < 0.10:
+            return round(float(np.random.uniform(15.0, phase2_price_max)), 2)
         # Part 2: get opt price
-        last_comp_median_p = competitor_median_array[-1]
+        last_comp_median_p = max(float(competitor_median_array[-1]), 1e-5)
 
         best_p = 50.0
         max_rev = -1.0
 
         # find the optimal price between 1 and 100 that max price * prob of buying 
-        for p_test in np.linspace(1.0, 100.0, 100):
+        for p_test in np.linspace(1.0, phase2_price_max, 100):
             log_demand = beta[0] + beta[1] * np.log(p_test) + beta[2] * np.log(last_comp_median_p) 
             expected_demand = np.exp(log_demand)
 
