@@ -198,7 +198,7 @@ def phase2_strategy(prices, outcomes, comp_prices):
         # Stronger elasticity guardrail
         if t < 60:
             beta[1] = min(beta[1], -1.2)
-            phase2_price_max = 80.0
+            phase2_price_max = 75.0
         else:
             beta[1] = min(beta[1], -0.8)
             phase2_price_max = 95.0
@@ -218,11 +218,16 @@ def phase2_strategy(prices, outcomes, comp_prices):
         # find the optimal price between 1 and 100 that max price * prob of buying 
         for p_test in np.linspace(1.0, phase2_price_max, 100):
             log_demand = beta[0] + beta[1] * np.log(p_test) + beta[2] * np.log(last_comp_median_p) 
+            
             expected_demand = np.exp(log_demand)
-
             expected_revenue = p_test * expected_demand
-            if expected_revenue > max_rev:
-                max_rev = expected_revenue
+
+            # penalize prices near the cap so we don't always sit at the upper bound
+            boundary_penalty = 1.0 - 0.15 * (p_test / phase2_price_max) ** 2
+            score = expected_revenue * boundary_penalty
+            
+            if score > max_rev:
+                max_rev = score
                 best_p = p_test
 
         return round(float(best_p), 2)
