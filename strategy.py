@@ -150,7 +150,8 @@ def phase2_strategy(prices, outcomes, comp_prices):
         if t == 0:
             return 50.0
 
-        competitor_median_array = np.median(comp_prices, axis=1)
+        #competitor_median_array = np.median(comp_prices, axis=1)
+        competitor_array = np.percentile(comp_prices, 25, axis=1)
 
         '''
         # MLE logistic regression
@@ -185,13 +186,13 @@ def phase2_strategy(prices, outcomes, comp_prices):
         X_log = np.column_stack([
             np.ones(t), 
             np.log(prices), 
-            np.log(competitor_median_array + 1e-5) # prevending error
+            np.log(competitor_array + 1e-5) # prevending error
         ])
         '''
         X_log = np.column_stack([
-                np.ones(time), 
+                np.ones(t), 
                 prices, #prices, #np.log(prices), 
-                competitor_median_array #np.log(competitor_median_array + 1e-5) # prevending error
+                competitor_array #np.log(competitor_median_array + 1e-5) # prevending error
             ])
         y_log = np.log(outcomes + 1.0) #in case demand = 0
         
@@ -204,7 +205,7 @@ def phase2_strategy(prices, outcomes, comp_prices):
         beta = np.random.multivariate_normal(mu_n, cov_n)
         if beta[1] > 0: beta[1] = -0.0001
 
-        last_comp_p = competitor_median_array[-1]
+        last_comp_p = competitor_array[-1]
         prices = np.linspace(1, 100, 500)
         log_demand = beta[0] + beta[1] * prices + beta[2] * last_comp_p
         demand = np.exp(log_demand)
