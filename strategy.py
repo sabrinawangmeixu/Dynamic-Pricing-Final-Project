@@ -186,11 +186,11 @@ def phase2_strategy(prices, outcomes, comp_prices):
         X_log = np.column_stack([
             np.ones(t), 
             np.log(prices), 
-            np.log(competitor_array + 1e-5) # prevending error
+            np.log(competitor_median_array + 1e-5) # prevending error
         ])
         '''
         X_log = np.column_stack([
-                np.ones(t), 
+                np.ones(t),
                 prices, #prices, #np.log(prices), 
                 competitor_array #np.log(competitor_median_array + 1e-5) # prevending error
             ])
@@ -400,21 +400,33 @@ def phase3_strategy(prices, outcomes, comp_prices):
         X = build_features(prices, comp_prices)
         y = demands
 
-        model = HistGradientBoostingRegressor(
-            loss="squared_error",
-            learning_rate=0.03,
-            max_iter=150,
-            max_depth=3,
-            min_samples_leaf=8,
-            random_state=0
-        )
-
-        model.fit(X, y)
+        try:
+            model = HistGradientBoostingRegressor(
+                loss="squared_error",
+                learning_rate=0.03,
+                max_iter=150,
+                max_depth=3,
+                min_samples_leaf=8,
+                random_state=0
+            )
+            model.fit(X,y)
+        except:
+            model = HistGradientBoostingRegressor(
+                loss="least_squares",
+                learning_rate=0.03,
+                max_iter=150,
+                max_depth=3,
+                min_samples_leaf=8,
+                random_state=0
+            )
+            model.fit(X, y)
 
         current_comp_row = comp_prices[-1]
 
-        best_p = 50.0
-        best_score = -1.0
+        #best_p = 50.0
+        fallback_p = float(np.median(current_comp_row))
+        best_p = fallback_p
+        best_score = -np.inf
 
         coarse_grid = np.linspace(1.0, 100.0, 50)
 
@@ -446,7 +458,7 @@ def phase3_strategy(prices, outcomes, comp_prices):
 
             score = float(p) * demand_hybrid
 
-            if score > best_score:
+            if np.isfinite(score) and score > best_score:
                 best_score = score
                 best_p = float(p)
 
